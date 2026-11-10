@@ -86,7 +86,7 @@ TOOLS = [
       "name": "recommend_outfit",
       "description": "Recommend suitable outfits based on temperature and rain probability. "
                      "Call this AFTER get_weather, using temp_high_c and rain_probability "
-                     "from the weather result. Returns a list of clothing recommendations."
+                     "from the weather result. Returns a list of clothing recommendations.",
       "input_schema": {
           "type": "object",
         "properties": {

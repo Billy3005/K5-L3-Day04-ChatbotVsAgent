@@ -57,47 +57,44 @@ def call_model(messages: list[dict]):
 def run_agent(question: str) -> str:
     messages = [{"role": "user", "content": question}]
 
-    def run_agent(question: str) -> str:
-        messages = [{"role": "user", "content": question}]
-    
-        for step in range(1, MAX_ITERATIONS + 1):
-            response = call_model(messages)
-            messages.append({
-                "role": "assistant",
-                "content": response.content
-            })
-            
-            text = "\n".join(
-                block.text
-                for block in response.content
-                if block.type == "text"
-            )
-            
-            if response.stop_reason != "tool_use":
-                return text
-            print(f"Thought {step}: {text}")
-    
-            tool_results = []
-    
-            for block in response.content:
-                if block.type == "tool_use":
-    
-                    print(f"Action {step}: {block.name}({block.input})")
-    
-                    result = run_tool(block.name, block.input)
-    
-                    print(f"Observation {step}: {result}")
-    
-                    tool_results.append({
-                        "type": "tool_result",
-                        "tool_use_id": block.id,
-                        "content": result
-                    })
-            messages.append({
-                "role": "user",
-                "content": tool_results
-            })
-        return "Xin lỗi, tôi đã dừng lại vì đạt giới hạn số vòng lặp xử lý."
+    for step in range(1, MAX_ITERATIONS + 1):
+        response = call_model(messages)
+        messages.append({
+            "role": "assistant",
+            "content": response.content
+        })
+
+        text = "\n".join(
+            block.text
+            for block in response.content
+            if block.type == "text"
+        )
+
+        if response.stop_reason != "tool_use":
+            return text
+        print(f"Thought {step}: {text}")
+
+        tool_results = []
+
+        for block in response.content:
+            if block.type == "tool_use":
+
+                print(f"Action {step}: {block.name}({block.input})")
+
+                result = run_tool(block.name, block.input)
+
+                print(f"Observation {step}: {result}")
+
+                tool_results.append({
+                    "type": "tool_result",
+                    "tool_use_id": block.id,
+                    "content": result
+                })
+        messages.append({
+            "role": "user",
+            "content": tool_results
+        })
+    return "Xin lỗi, tôi đã dừng lại vì đạt giới hạn số vòng lặp xử lý."
 
 
 def main() -> None:
