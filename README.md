@@ -9,6 +9,56 @@ Sau đó chấm agent của mình trên bộ 20 câu hỏi, từ dễ đến kh�
 
 Agent trong bài là trợ lý du lịch: hỏi *"Ngày mai ở Đà Nẵng nên mặc gì?"*, agent tự tra ngày, tra thời tiết, rồi gợi ý trang phục.
 
+## Ý tưởng
+
+Một agent không có gì bí ẩn. Nó chỉ gồm 3 thứ:
+
+```
+Agent = LLM (bộ não) + Tools (tay chân) + Loop (vòng lặp nối hai thứ đó lại)
+```
+
+- **LLM** quyết định bước tiếp theo: trả lời luôn, hay cần gọi tool nào, với tham số gì.
+- **Tool** là code Python bình thường, làm việc thật (tra ngày, tra thời tiết...). LLM không tự chạy được tool, nó chỉ *yêu cầu* gọi.
+- **Loop** là phần code của bạn: nhận yêu cầu từ LLM → chạy tool → gửi kết quả lại → hỏi LLM tiếp, cho tới khi LLM trả lời xong.
+
+Framework như LangChain hay LangGraph làm hộ phần **Loop**. Bài này bắt bạn tự viết nó, để hiểu framework đang làm gì bên dưới.
+
+### Kiến trúc tổng thể
+
+Ô viền cam là phần bạn tự viết (TODO).
+
+```mermaid
+flowchart LR
+    U(["Người dùng"]) -->|"câu hỏi"| L
+
+    subgraph AG["agent.py"]
+        P["SYSTEM_PROMPT"]
+        L["Agent loop<br/>TODO 3"]
+        P -.->|"gửi kèm mỗi lần gọi"| L
+    end
+
+    L <-->|"messages + schema TOOLS<br/>trả về: text hoặc tool_use"| M[("Claude API")]
+    L -->|"run_tool(name, args)"| R
+
+    subgraph TL["tools.py"]
+        S["TOOLS: schema<br/>TODO 2"]
+        R["run_tool()"]
+        F1["get_current_date"]
+        F2["get_weather"]
+        F3["recommend_outfit<br/>TODO 1"]
+        R --> F1 & F2 & F3
+    end
+
+    R -->|"JSON hoặc ERROR: ..."| L
+    L -->|"Final Answer"| U
+
+    classDef todo fill:#FFF4E5,stroke:#E8710A,stroke-width:2px,color:#000
+    class L,S,F3 todo
+```
+
+- **Schema** (TODO 2) là thứ duy nhất LLM nhìn thấy về tool. Thiếu schema, LLM không biết tool tồn tại dù hàm đã viết xong.
+- **`run_tool()`** luôn trả về chuỗi. Khi tool lỗi, nó trả `ERROR: ...` thay vì làm sập chương trình, để LLM đọc lỗi và tự sửa tham số.
+
 ## Repo có gì
 
 | File | Nội dung |
@@ -67,13 +117,67 @@ Hướng dẫn chi tiết nằm ngay trong code.
 
 Sau mỗi TODO, chạy `./run.sh check`. Làm xong TODO nào thì dòng đó chuyển ✓.
 
+### Vòng lặp bạn sẽ viết ở TODO 3
+
+Đây là pseudocode slide 27 vẽ thành flowchart. Một vòng = **Thought + Action** (model quyết định) rồi **Observation** (kết quả tool gửi về).
+
+```mermaid
+flowchart TD
+    Q(["Câu hỏi của người dùng"]) --> INIT["messages = [câu hỏi]"]
+    INIT --> LIM{"step ≤ MAX_ITERATIONS?"}
+    LIM -->|"hết vòng"| STOP(["Dừng an toàn:<br/>báo đã chạm giới hạn"])
+    LIM -->|"còn vòng"| CALL["response = call_model(messages)<br/><i>Thought + Action</i>"]
+    CALL --> SAVE["messages += lượt assistant<br/>(nguyên response.content)"]
+    SAVE --> DEC{"stop_reason == tool_use?"}
+    DEC -->|"không"| FIN(["Final Answer:<br/>trả về text của model"])
+    DEC -->|"có"| RUN["Với MỖI block tool_use:<br/>result = run_tool(name, input)<br/><i>Observation</i>"]
+    RUN --> BACK["messages += 1 lượt user<br/>chứa TẤT CẢ tool_result"]
+    BACK --> LIM
+
+    classDef todo fill:#FFF4E5,stroke:#E8710A,stroke-width:2px,color:#000
+    class INIT,LIM,CALL,SAVE,DEC,RUN,BACK todo
+```
+
+`MAX_ITERATIONS` là safeguard (slide 30): dù model có "kẹt", vòng lặp vẫn chắc chắn dừng.
+
 ## Bước 2: Chạy thử agent
 
 ```bash
 ./run.sh ask "Ngày mai ở Đà Nẵng nên mặc gì?"
 ```
 
-Bạn sẽ thấy trace dạng:
+Bên dưới, một câu hỏi chạy qua hệ thống như sau. Mỗi lần model trả `tool_use` là thêm một vòng lặp:
+
+```mermaid
+sequenceDiagram
+    actor U as Người dùng
+    participant A as agent.py (loop)
+    participant M as Claude
+    participant T as tools.py
+
+    U->>A: Ngày mai ở Đà Nẵng nên mặc gì?
+    Note over A,T: Vòng 1
+    A->>M: messages + TOOLS
+    M-->>A: Thought: cần biết ngày mai + tool_use get_current_date
+    A->>T: run_tool("get_current_date")
+    T-->>A: tomorrow = 2026-11-11
+    Note over A,T: Vòng 2
+    A->>M: tool_result
+    M-->>A: tool_use get_weather(Đà Nẵng, 2026-11-11)
+    A->>T: run_tool("get_weather")
+    T-->>A: temp_high_c = 33, rain_probability = 0.3
+    Note over A,T: Vòng 3
+    A->>M: tool_result
+    M-->>A: tool_use recommend_outfit(33, 0.3)
+    A->>T: run_tool("recommend_outfit")
+    T-->>A: items = [áo thun mỏng, vải cotton]
+    Note over A,T: Vòng 4
+    A->>M: tool_result
+    M-->>A: stop_reason = end_turn, câu trả lời
+    A-->>U: Final Answer
+```
+
+Trên terminal, bạn sẽ thấy trace dạng:
 
 ```
 Thought 1: Cần biết ngày mai là ngày nào.
@@ -97,6 +201,20 @@ Final Answer: ...
 | medium | 5 | "Ngày mai ở Hà Nội nên mặc gì?" | Gọi đủ chuỗi tool, đúng ngày, đúng số liệu |
 | hard | 5 | "Trong 4 thành phố, ngày mai nơi nào nóng nhất?" | Tra nhiều nơi hoặc nhiều ngày, rồi so sánh |
 | edge | 5 | Thành phố không có dữ liệu, ngày sai, user đưa "70%", user bảo "cứ đoán đại" | Không bịa, đổi đúng đơn vị, xử lý lỗi |
+
+Luồng chấm điểm:
+
+```mermaid
+flowchart LR
+    D["dataset.py<br/>20 câu + điều kiện chấm<br/>đáp án tính từ tools"] --> E["evaluate.py"]
+    E -->|"chạy từng câu"| A["agent.run_agent()"]
+    A -.->|"ghi lại: tool đã gọi,<br/>số lượt model, token, trace"| E
+    E --> G{"Chấm từng điều kiện<br/>gọi đúng tool? đúng số liệu?<br/>không bịa?"}
+    G --> R1["report.md<br/>bảng tổng hợp + trace"]
+    G --> R2["report.json<br/>dữ liệu thô"]
+    R1 --> FIX["Đọc trace, sửa<br/>prompt / tool / loop"]
+    FIX -->|"chạy lại: --ids"| E
+```
 
 Đáp án đúng được tính thẳng từ dữ liệu của tool, nên không cần LLM chấm. Mỗi câu nhận 1 trong 3 kết quả: **PASS** (đúng hết), **PARTIAL** (đúng một phần), **FAIL**.
 
